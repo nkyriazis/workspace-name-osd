@@ -32,6 +32,26 @@ Log out and back in so GNOME Shell picks up the new extension (on Wayland there 
 gnome-extensions enable workspace-name-osd@nkyriazis.github.com
 ```
 
+### If nothing shows up
+
+Check what GNOME thinks of the extension.
+
+```bash
+gnome-extensions info workspace-name-osd@nkyriazis.github.com
+```
+
+If it says `Enabled: Yes` but `State: INITIALIZED` rather than `ACTIVE`, all user-installed extensions are switched off. This is the "Extensions" toggle in the Extensions app, and Ubuntu sometimes sets it after an upgrade. Turn them back on (no logout needed) with
+
+```bash
+gsettings set org.gnome.shell disable-user-extensions false
+```
+
+If it is `ACTIVE` and still nothing appears, watch the log while switching workspaces.
+
+```bash
+journalctl --user -f -o cat | grep -iE "workspace-name|JS ERROR"
+```
+
 ## Uninstalling
 
 ```bash
