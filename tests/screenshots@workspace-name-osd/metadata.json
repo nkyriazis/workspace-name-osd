@@ -1,0 +1,6 @@
+{
+  "uuid": "screenshots@workspace-name-osd",
+  "name": "Workspace Name OSD screenshots",
+  "description": "Stages the extension and captures README screenshots in a nested session. Test use only.",
+  "shell-version": ["50"]
+}

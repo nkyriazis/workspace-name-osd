@@ -1,0 +1,6 @@
+{
+  "uuid": "selftest@workspace-name-osd",
+  "name": "Workspace Name OSD self-test",
+  "description": "Drives the extension through its states in a nested session. Test use only.",
+  "shell-version": ["50"]
+}

@@ -1,0 +1,9 @@
+{
+  "uuid": "workspace-name-osd@nkyriazis.github.com",
+  "name": "Workspace Name OSD",
+  "description": "Shows the workspace name in large type in the centre of the screen when you switch workspaces, or on demand with Super+F2. Click the name, or press Super+F2 again, to rename the workspace.",
+  "shell-version": ["50"],
+  "settings-schema": "org.gnome.shell.extensions.workspace-name-osd",
+  "url": "https://github.com/nkyriazis/workspace-name-osd",
+  "version": 1
+}

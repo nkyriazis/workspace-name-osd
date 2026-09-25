@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<schemalist>
+  <schema id="org.gnome.shell.extensions.workspace-name-osd"
+          path="/org.gnome.shell.extensions.workspace-name-osd/">
+    <key name="show-name" type="as">
+      <default><![CDATA[['<Super>F2']]]></default>
+      <summary>Show the workspace name</summary>
+      <description>Press once to show the current workspace name, press again while it is showing to rename it.</description>
+    </key>
+    <key name="font-size" type="i">
+      <range min="16" max="400"/>
+      <default>96</default>
+      <summary>Font size in pixels</summary>
+    </key>
+    <key name="switch-hold-ms" type="i">
+      <range min="0" max="10000"/>
+      <default>900</default>
+      <summary>How long the name stays up after switching workspace, in milliseconds</summary>
+    </key>
+    <key name="demand-hold-ms" type="i">
+      <range min="0" max="30000"/>
+      <default>2500</default>
+      <summary>How long the name stays up when shown with the shortcut, in milliseconds</summary>
+    </key>
+  </schema>
+</schemalist>
