@@ -32,6 +32,30 @@ Log out and back in so GNOME Shell picks up the new extension (on Wayland there 
 gnome-extensions enable workspace-name-osd@nkyriazis.github.com
 ```
 
+## Uninstalling
+
+```bash
+make uninstall
+```
+
+or, without the repo
+
+```bash
+gnome-extensions uninstall workspace-name-osd@nkyriazis.github.com
+```
+
+This turns the extension off and deletes it straight away, no logout needed. Its own settings (shortcut, size, timings) are left behind in dconf, and this clears them.
+
+```bash
+dconf reset -f /org/gnome/shell/extensions/workspace-name-osd/
+```
+
+Your workspace names belong to GNOME rather than to the extension, so uninstalling keeps them. To clear those as well
+
+```bash
+gsettings reset org.gnome.desktop.wm.preferences workspace-names
+```
+
 ## Settings
 
 There is no preferences window yet. All settings apply immediately, without logging out.
