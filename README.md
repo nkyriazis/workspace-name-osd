@@ -2,6 +2,8 @@
 
 A GNOME Shell extension that shows the name of the workspace in big letters in the middle of the screen every time you switch, so you always know where you landed. You can also bring the name up whenever you like, and rename the workspace right there.
 
+[Install it from extensions.gnome.org](https://extensions.gnome.org/extension/11102/workspace-name-osd/) (GNOME 50).
+
 ![The workspace name shown after switching](docs/switch.png)
 
 ## Using it
@@ -32,7 +34,7 @@ GNOME 50 only for now (tested on Ubuntu 26.04).
 
 This is the way to install it. GNOME then checks for new versions once a day and installs them at your next login, with nothing to do on your part.
 
-The extension is waiting for review there. Once it is listed, search for Workspace Name OSD on [extensions.gnome.org](https://extensions.gnome.org) and turn it on from its page, or find it in the Extension Manager app. Until then, install it from GitHub as described next.
+Open [its page on extensions.gnome.org](https://extensions.gnome.org/extension/11102/workspace-name-osd/) and turn it on there, or search for Workspace Name OSD in the Extension Manager app. The website's switch needs GNOME's browser integration, and the page explains how to set that up if it is missing.
 
 ### From GitHub
 
@@ -104,7 +106,7 @@ First remove the copy you installed by hand.
 gnome-extensions uninstall workspace-name-osd@nkyriazis.github.com
 ```
 
-Then install it from its page on extensions.gnome.org, and log out and back in once so the new copy is the one that runs.
+Then install it from [its page on extensions.gnome.org](https://extensions.gnome.org/extension/11102/workspace-name-osd/), and log out and back in once so the new copy is the one that runs.
 
 ## Uninstalling
 
