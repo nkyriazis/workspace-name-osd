@@ -48,7 +48,7 @@ While the extension is disabled, on the lock screen for instance, it cannot see 
 
 ## Testing
 
-`make test` starts a separate GNOME Shell without a window (headless, with virtual monitors) and throwaway settings, loads the extension from the repo, and drives it with simulated keyboard and mouse input and real test windows. It runs once with one monitor and once with three. The same tests run on every pull request.
+`make test` starts a separate GNOME Shell without a window (headless, with virtual monitors) and throwaway settings, loads the extension from the repo, and drives it with simulated keyboard and mouse input and real test windows. It runs once with one monitor and once with three. The tests need GNOME Shell 50, so they run on a developer machine before a pull request is merged.
 
 ## Questions a reviewer may ask
 

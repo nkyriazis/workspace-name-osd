@@ -1,0 +1,86 @@
+# Every pull request is checked. Every push to main that carries a new
+# version-name publishes a GitHub release with the installable zip.
+# The tests need GNOME Shell 50 and run locally with make test.
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+env:
+  UUID: workspace-name-osd@nkyriazis.github.com
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Metadata and changelog
+        run: |
+          V=$(tools/version.sh)
+          echo "version-name is $V"
+          [[ "$V" =~ ^[0-9]+$ ]] || { echo "::error::version-name must be a whole number, got '$V'"; exit 1; }
+          python3 - "$UUID/metadata.json" <<'PY'
+          import json, sys
+          if "version" in json.load(open(sys.argv[1])):
+              sys.exit("::error::metadata.json has a version field; extensions.gnome.org sets it, use version-name")
+          PY
+          tools/changelog-entry.sh "$V" > /dev/null \
+            || { echo "::error::CHANGELOG.md has no '## $V (date)' entry"; exit 1; }
+
+      - name: Settings schema compiles
+        run: |
+          command -v glib-compile-schemas > /dev/null \
+            || { sudo apt-get update -q && sudo apt-get install -y -q libglib2.0-bin; }
+          glib-compile-schemas --strict --dry-run "$UUID/schemas"
+
+      - name: Version bumped if the extension changed
+        if: github.event_name == 'pull_request'
+        run: |
+          BASE=${{ github.event.pull_request.base.sha }}
+          if git diff --quiet "$BASE" HEAD -- "$UUID"; then
+            echo "The extension itself is unchanged, no new version needed."
+            exit 0
+          fi
+          OLD=$(git show "$BASE:$UUID/metadata.json" | python3 -c \
+            'import json, sys; m = json.load(sys.stdin); print(m.get("version-name", m.get("version", 0)))')
+          NEW=$(tools/version.sh)
+          if [ "$NEW" -le "$OLD" ]; then
+            echo "::error::The extension changed, so bump version-name above $OLD in metadata.json and add a CHANGELOG.md entry for it."
+            exit 1
+          fi
+          echo "Version $OLD -> $NEW"
+
+  release:
+    needs: [check]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    concurrency: release
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build the zip
+        run: make pack
+
+      - name: Publish the release if this version is new
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          V=$(tools/version.sh)
+          if gh release view "v$V" > /dev/null 2>&1; then
+            echo "v$V is already released, nothing to do."
+            exit 0
+          fi
+          tools/changelog-entry.sh "$V" > notes.md
+          gh release create "v$V" "$UUID.shell-extension.zip" \
+            --title "Version $V" --notes-file notes.md --target "$GITHUB_SHA"

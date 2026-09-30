@@ -3,8 +3,14 @@ ZIP  = $(UUID).shell-extension.zip
 
 .PHONY: pack install uninstall test shots shots-multi clean
 
+# What goes in the zip for users and extensions.gnome.org. Plain zip, so the
+# same command works here and on GitHub, where GNOME is not installed.
+FILES = metadata.json extension.js stylesheet.css \
+        schemas/org.gnome.shell.extensions.workspace-name-osd.gschema.xml
+
 pack:
-	gnome-extensions pack $(UUID) --force
+	rm -f $(ZIP)
+	cd $(UUID) && zip -q -X ../$(ZIP) $(FILES)
 
 install: pack
 	gnome-extensions install --force $(ZIP)

@@ -8,6 +8,12 @@ import {Extension} from 'resource:///org/gnome/shell/extensions/extension.js';
 const UUID = 'workspace-name-osd@nkyriazis.github.com';
 const HIDDEN = 0, SHOWING = 1, EDITING = 2;
 const sleep = ms => new Promise(r => GLib.timeout_add(GLib.PRIORITY_DEFAULT, ms, () => { r(); return GLib.SOURCE_REMOVE; }));
+// Polls instead of guessing a delay; CI renders in software and is slow.
+const until = async (cond, ms = 3000) => {
+    for (let t = 0; t < ms && !cond(); t += 50)
+        await sleep(50);
+    return cond();
+};
 const say = m => console.log(`OSDTEST ${m}`);
 
 let failures = 0;
@@ -363,13 +369,19 @@ export default class SelfTest extends Extension {
         const type = async text => {
             for (const ch of text) await tap(Clutter.unicode_to_keysym(ch.codePointAt(0)));
         };
+        // A person clicks on what they can see, so wait for fades to finish
+        // before clicking and again before the caller checks the result.
+        const settled = () => ext()._overlays.every(ov =>
+            !ov.box.visible || (ov.box.opacity === 255 && !ov.box.get_transition('opacity')));
         const clickAt = async (x, y) => {
+            await until(settled);
             ptr.notify_absolute_motion(now(), x, y);
             await sleep(80);
             ptr.notify_button(now(), Clutter.BUTTON_PRIMARY, Clutter.ButtonState.PRESSED);
             await sleep(60);
             ptr.notify_button(now(), Clutter.BUTTON_PRIMARY, Clutter.ButtonState.RELEASED);
             await sleep(250);
+            await until(settled);
         };
         const boxCentre = (ov = ext()._editing ?? o.here()) => {
             const [x, y] = ov.box.get_transformed_position();
