@@ -42,6 +42,14 @@ jobs:
             || { sudo apt-get update -q && sudo apt-get install -y -q libglib2.0-bin; }
           glib-compile-schemas --strict --dry-run "$UUID/schemas"
 
+      - name: Static analysis (Shexli, as extensions.gnome.org suggests)
+        run: |
+          python3 -m venv /tmp/shexli
+          # tree-sitter 0.26 crashes Shexli 0.2.1 on Python 3.14.
+          /tmp/shexli/bin/pip install -q shexli "tree-sitter<0.26"
+          make pack
+          SHEXLI=/tmp/shexli/bin/shexli tools/lint.sh "$UUID.shell-extension.zip"
+
       - name: Version bumped if the extension changed
         if: github.event_name == 'pull_request'
         run: |

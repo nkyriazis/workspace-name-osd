@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <schemalist>
   <schema id="org.gnome.shell.extensions.workspace-name-osd"
-          path="/org.gnome.shell.extensions.workspace-name-osd/">
+          path="/org/gnome/shell/extensions/workspace-name-osd/">
     <key name="show-name" type="as">
       <default><![CDATA[['<Super>F2']]]></default>
       <summary>Show the workspace name</summary>

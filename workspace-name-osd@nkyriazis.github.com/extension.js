@@ -69,6 +69,8 @@ export default class WorkspaceOsdExtension extends Extension {
         this._restoreUnredirect();
 
         this._destroyOverlays();
+        this._entrySignalIds.forEach(id => this._entry.clutter_text.disconnect(id));
+        this._entrySignalIds = null;
         this._entry.destroy();
         this._hint.destroy();
         this._entry = null;
@@ -93,14 +95,17 @@ export default class WorkspaceOsdExtension extends Extension {
             visible: false,
         });
 
-        this._entry.clutter_text.connect('activate', () => this._commit());
-        this._entry.clutter_text.connect('key-press-event', (_actor, event) => {
-            if (event.get_key_symbol() === Clutter.KEY_Escape) {
-                this._cancel();
-                return Clutter.EVENT_STOP;
-            }
-            return Clutter.EVENT_PROPAGATE;
-        });
+        const text = this._entry.clutter_text;
+        this._entrySignalIds = [
+            text.connect('activate', () => this._commit()),
+            text.connect('key-press-event', (_actor, event) => {
+                if (event.get_key_symbol() === Clutter.KEY_Escape) {
+                    this._cancel();
+                    return Clutter.EVENT_STOP;
+                }
+                return Clutter.EVENT_PROPAGATE;
+            }),
+        ];
 
         this._buildOverlays();
     }
@@ -125,7 +130,8 @@ export default class WorkspaceOsdExtension extends Extension {
             // Same pattern as the shell's GrabHelper: while grabbed, clicks
             // anywhere on screen are routed through the grab actor.
             overlay.clickGesture = new Clutter.ClickGesture();
-            overlay.clickGesture.connect('recognize', () => this._onClick(overlay));
+            overlay.clickId = overlay.clickGesture.connect('recognize',
+                () => this._onClick(overlay));
             box.add_action(overlay.clickGesture);
 
             Main.layoutManager.addTopChrome(box);
@@ -138,7 +144,8 @@ export default class WorkspaceOsdExtension extends Extension {
         for (const actor of [this._entry, this._hint])
             actor.get_parent()?.remove_child(actor);
 
-        for (const {box} of this._overlays) {
+        for (const {box, clickGesture, clickId} of this._overlays) {
+            clickGesture.disconnect(clickId);
             Main.layoutManager.removeChrome(box);
             box.destroy();
         }
