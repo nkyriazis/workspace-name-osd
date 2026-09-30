@@ -6,7 +6,7 @@ import Shell from 'gi://Shell';
 import St from 'gi://St';
 
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
-import {Extension} from 'resource:///org/gnome/shell/extensions/extension.js';
+import {Extension, InjectionManager} from 'resource:///org/gnome/shell/extensions/extension.js';
 
 const FADE_IN_MS = 120;
 const FADE_OUT_MS = 350;
@@ -36,6 +36,8 @@ export default class WorkspaceOsdExtension extends Extension {
         this._switchId = global.workspace_manager.connect(
             'active-workspace-changed', () => this._onWorkspaceSwitched());
 
+        this._trackWorkspaces();
+
         Main.wm.addKeybinding('show-name', this._settings,
             Meta.KeyBindingFlags.NONE,
             Shell.ActionMode.NORMAL | Shell.ActionMode.OVERVIEW,
@@ -49,6 +51,8 @@ export default class WorkspaceOsdExtension extends Extension {
             global.workspace_manager.disconnect(this._switchId);
             this._switchId = 0;
         }
+
+        this._untrackWorkspaces();
 
         this._clearTimeout();
         this._releaseModal();
@@ -264,6 +268,108 @@ export default class WorkspaceOsdExtension extends Extension {
         while (names.length > 0 && names[names.length - 1] === '')
             names.pop();
         this._wmSettings.set_strv('workspace-names', names);
+    }
+
+    // --- keeping names with their workspaces --------------------------------
+    //
+    // GNOME stores names by position. When a workspace goes away or a new
+    // one is put between others, the later workspaces change position, so we
+    // move their names along with them. Names stored past the last
+    // workspace wait for workspaces that do not exist yet and move the same
+    // way.
+
+    _trackWorkspaces() {
+        const wsm = global.workspace_manager;
+        this._workspaces = this._listWorkspaces();
+        this._wsSignalIds = [
+            wsm.connect('workspace-added', (_wsm, index) => this._onWorkspaceAdded(index)),
+            wsm.connect('workspace-removed', (_wsm, index) => this._onWorkspaceRemoved(index)),
+            wsm.connect('workspaces-reordered', () => this._onWorkspacesReordered()),
+        ];
+
+        // Inserting a workspace from the overview does not add one in the
+        // middle. The shell appends one at the end and moves every window
+        // from that position onwards to the next workspace, so the names
+        // have to move up by one too.
+        const ext = this;
+        this._injections = new InjectionManager();
+        this._injections.overrideMethod(Object.getPrototypeOf(Main.wm), 'insertWorkspace',
+            original => function (pos) {
+                const shifts = Meta.prefs_get_dynamic_workspaces() &&
+                    pos < global.workspace_manager.n_workspaces;
+                original.call(this, pos);
+                if (shifts)
+                    ext._insertNameAt(pos);
+            });
+    }
+
+    _untrackWorkspaces() {
+        this._injections.clear();
+        this._injections = null;
+        this._wsSignalIds.forEach(id => global.workspace_manager.disconnect(id));
+        this._wsSignalIds = null;
+        this._workspaces = null;
+    }
+
+    _listWorkspaces() {
+        const wsm = global.workspace_manager;
+        const list = [];
+        for (let i = 0; i < wsm.n_workspaces; i++)
+            list.push(wsm.get_workspace_by_index(i));
+        return list;
+    }
+
+    // Adding or removing the last workspace moves nothing, so the names stay
+    // where they are. A workspace appended later takes the name stored for
+    // its position, as before, which is how names come back after a restart.
+    // Mutter only ever appends, but a workspace added anywhere else would
+    // push the later names up.
+    _onWorkspaceAdded(index) {
+        const last = index === this._workspaces.length;
+        this._workspaces = this._listWorkspaces();
+        if (!last)
+            this._insertNameAt(index);
+    }
+
+    _onWorkspaceRemoved(index) {
+        const last = index === this._workspaces.length - 1;
+        this._workspaces = this._listWorkspaces();
+        if (last)
+            return;
+        // _index is the workspace the OSD was opened on, so keep it there.
+        if (index < this._index)
+            this._index--;
+        this._writeNames(names => names.splice(index, 1));
+    }
+
+    _onWorkspacesReordered() {
+        const before = this._workspaces;
+        this._workspaces = this._listWorkspaces();
+        const from = this._workspaces.map(ws => before.indexOf(ws));
+        this._index = Math.max(0, from.indexOf(this._index));
+        this._writeNames(names => {
+            const moved = from.map(i => names[i] ?? '');
+            names.splice(0, moved.length, ...moved);
+        });
+    }
+
+    _insertNameAt(index) {
+        if (index <= this._index)
+            this._index++;
+        this._writeNames(names => {
+            if (index < names.length)
+                names.splice(index, 0, '');
+        });
+    }
+
+    _writeNames(change) {
+        const old = this._wmSettings.get_strv('workspace-names');
+        const names = [...old];
+        change(names);
+        while (names.length > 0 && names[names.length - 1] === '')
+            names.pop();
+        if (JSON.stringify(names) !== JSON.stringify(old))
+            this._wmSettings.set_strv('workspace-names', names);
     }
 
     // --- modal and compositor state ----------------------------------------

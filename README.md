@@ -14,7 +14,9 @@ To rename, click the name while it is on screen, or press Super+F2 a second time
 
 ![Renaming a workspace](docs/rename.png)
 
-The names are kept in GNOME's own `workspace-names` setting, so they survive reboots and show up in anything else that reads them. GNOME ties a name to a position (the second workspace from the left), not to the windows on it. With dynamic workspaces, removing an empty workspace moves the ones after it along, and they take the names of their new positions.
+The names are kept in GNOME's own `workspace-names` setting, so they survive reboots and show up in anything else that reads them. GNOME ties a name to a position (the second workspace from the left), not to the windows on it. With dynamic workspaces GNOME removes a workspace once it is empty, and the ones after it move along. The extension moves their names with them, so each workspace keeps its own name and the removed one's name is dropped. The same happens when you drop a window between two workspaces in the overview to create a new one there. The new workspace starts unnamed and the ones after it keep theirs.
+
+Removing the last workspace, or adding one at the end, leaves the names alone. A new workspace at the end takes the name stored for its position, which is how your names come back after a restart. While the extension is disabled (for example while the screen is locked) it cannot see workspaces change, so names can end up on the wrong workspace if one is removed in that time.
 
 ## Installing
 

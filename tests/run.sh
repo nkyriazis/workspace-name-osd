@@ -59,6 +59,8 @@ if [ "$WSOSD_DRIVER" = screenshots@workspace-name-osd ]; then
 else
   gsettings set org.gnome.desktop.wm.preferences workspace-names "['one', 'two', 'three', 'four']"
 fi
+# Test windows must only ever reach the nested shell.
+unset DISPLAY WAYLAND_DISPLAY
 gnome-shell --headless --virtual-monitor 1920x1080 > "$WSOSD_LOG" 2>&1 &
 PID=$!
 for _ in $(seq 1 90); do grep -q "$WSOSD_TAG DONE" "$WSOSD_LOG" && break; sleep 1; done

@@ -1,6 +1,7 @@
 import Clutter from 'gi://Clutter';
 import Gio from 'gi://Gio';
 import GLib from 'gi://GLib';
+import Meta from 'gi://Meta';
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 import {Extension} from 'resource:///org/gnome/shell/extensions/extension.js';
 
@@ -140,6 +141,7 @@ export default class SelfTest extends Extension {
         check('hides after re-enable', s() === HIDDEN, `state=${s()}`);
 
         await this._realInput(ext, wm, wmPrefs, s, settle);
+        await this._keepNames(ext, wm, wmPrefs, s, settle);
     }
 
     // Phase 2: the same flows through synthetic keyboard and pointer events,
@@ -237,5 +239,155 @@ export default class SelfTest extends Extension {
         wmPrefs.set_strv('workspace-names', before);
         kbd.run_dispose?.();
         ptr.run_dispose?.();
+    }
+
+    // Phase 3: with dynamic workspaces, names follow their workspaces when
+    // one is removed, inserted or reordered. Real windows from a small GTK
+    // client make the shell remove an emptied workspace by itself.
+    async _keepNames(ext, wm, wmPrefs, s, settle) {
+        say('--- keep names phase');
+        const mutter = new Gio.Settings({schema_id: 'org.gnome.mutter'});
+        const names = () => JSON.stringify(wmPrefs.get_strv('workspace-names'));
+        const want = list => JSON.stringify(list);
+        let writes = 0;
+        const writesId = wmPrefs.connect('changed::workspace-names', () => writes++);
+
+        const launcher = new Gio.SubprocessLauncher({flags: Gio.SubprocessFlags.NONE});
+        launcher.setenv('GDK_BACKEND', 'wayland', true);
+        launcher.unsetenv('DISPLAY');
+        say(`client WAYLAND_DISPLAY=${GLib.getenv('WAYLAND_DISPLAY')}`);
+        const procs = [];
+        const open = async title => {
+            const proc = launcher.spawnv([`${this.path}/client.py`, title]);
+            procs.push(proc);
+            for (let i = 0; i < 100; i++) {
+                const win = global.get_window_actors().map(a => a.meta_window)
+                    .find(w => w.get_title() === title);
+                if (win)
+                    return [proc, win];
+                await sleep(100);
+            }
+            throw new Error(`window ${title} did not appear`);
+        };
+        const close = async proc => {
+            proc.force_exit();
+            await sleep(1500);
+        };
+        const go = async i => {
+            wm.get_workspace_by_index(i).activate(global.get_current_time());
+            await sleep(300);
+        };
+        const shown = async i => {
+            await go(i);
+            return ext()._label.text;
+        };
+        const at = win => win.get_workspace().index();
+
+        await go(0);
+        await settle();
+        const stored = names();
+        mutter.set_boolean('dynamic-workspaces', true);
+        await sleep(1000);
+        check('[keep] dynamic workspaces on', Meta.prefs_get_dynamic_workspaces() && wm.n_workspaces === 2, `n=${wm.n_workspaces}`);
+        check('[keep] dropping empty workspaces at the end keeps their names', names() === stored, names());
+
+        wmPrefs.set_strv('workspace-names', ['main', 'mail', 'code', 'music']);
+        const [pA, wA] = await open('osd-A');
+        const [pB, wB] = await open('osd-B');
+        wB.change_workspace_by_index(1, false);
+        await sleep(500);
+        const [pC, wC] = await open('osd-C');
+        wC.change_workspace_by_index(2, false);
+        await sleep(1000);
+        check('[keep] real windows on workspaces 1 to 3', wm.n_workspaces === 4 && at(wA) === 0 && at(wB) === 1 && at(wC) === 2,
+            `n=${wm.n_workspaces} A=${at(wA)} B=${at(wB)} C=${at(wC)}`);
+        check('[keep] appended workspaces leave names alone', names() === want(['main', 'mail', 'code', 'music']), names());
+
+        // The shell removes workspace 2 by itself once its only window is gone.
+        writes = 0;
+        await close(pB);
+        check('[keep] closing the last window removed the workspace', wm.n_workspaces === 3 && at(wC) === 1,
+            `n=${wm.n_workspaces} C=${at(wC)}`);
+        check('[keep] names moved down with their workspaces', names() === want(['main', 'code', 'music']), names());
+        check('[keep] mutter reads the moved name', Meta.prefs_get_workspace_name(1) === 'code', Meta.prefs_get_workspace_name(1));
+        check('[keep] switching to the old code workspace shows code', await shown(1) === 'code', ext()._label.text);
+        check('[keep] trailing empty workspace keeps music', await shown(2) === 'music', ext()._label.text);
+        await go(0);
+        await settle();
+        check('[keep] one write for the removal, no loop', writes === 1 && names() === want(['main', 'code', 'music']), `writes=${writes} ${names()}`);
+
+        // Dropping a window between workspaces in the overview runs this.
+        writes = 0;
+        const [pD, wD] = await open('osd-D');
+        Main.wm.insertWorkspace(1);
+        Main.moveWindowToMonitorAndWorkspace(wD, wD.get_monitor(), 1, true);
+        await sleep(1000);
+        check('[keep] insert put a new workspace at 2', wm.n_workspaces === 4 && at(wA) === 0 && at(wD) === 1 && at(wC) === 2,
+            `n=${wm.n_workspaces} A=${at(wA)} D=${at(wD)} C=${at(wC)}`);
+        check('[keep] insert moved later names up', names() === want(['main', '', 'code', 'music']), names());
+        const fresh = await shown(1);
+        check('[keep] new workspace has the default name', !['main', 'code', 'music'].includes(fresh), fresh);
+        check('[keep] code followed its workspace to 3', await shown(2) === 'code', ext()._label.text);
+        await go(0);
+        await settle();
+        check('[keep] one write for the insert, no loop', writes === 1, `writes=${writes} ${names()}`);
+
+        // No shell code reorders workspaces, but other extensions can.
+        writes = 0;
+        wm.reorder_workspace(wm.get_workspace_by_index(2), 0);
+        await sleep(500);
+        check('[keep] reorder moved the window', at(wC) === 0 && at(wA) === 1 && at(wD) === 2, `C=${at(wC)} A=${at(wA)} D=${at(wD)}`);
+        check('[keep] reorder permuted names', names() === want(['code', 'main', '', 'music']), names());
+        check('[keep] reordered workspace shows code', await shown(0) === 'code', ext()._label.text);
+        await settle();
+        check('[keep] one write for the reorder, no loop', writes === 1, `writes=${writes}`);
+
+        // A workspace before the one being renamed goes away mid edit.
+        await go(2);
+        ext()._onShortcut();
+        await sleep(100);
+        ext()._onShortcut();
+        await sleep(100);
+        check('[keep] editing workspace 3', s() === 2 && ext()._index === 2, `state=${s()} index=${ext()._index}`);
+        await close(pA);
+        check('[keep] workspace removed while editing', wm.n_workspaces === 3 && at(wD) === 1, `n=${wm.n_workspaces} D=${at(wD)}`);
+        check('[keep] edit follows its workspace', ext()._index === 1, `index=${ext()._index}`);
+        ext()._entry.text = 'docs';
+        ext()._commit();
+        await sleep(200);
+        check('[keep] commit lands on the edited workspace', names() === want(['code', 'docs', 'music']), names());
+        await settle();
+
+        // While disabled nothing is tracked (the lock screen case).
+        const proto = Object.getPrototypeOf(Main.wm);
+        const patched = proto.insertWorkspace;
+        const obj = ext();
+        obj.disable();
+        check('[keep] disable restores insertWorkspace', proto.insertWorkspace !== patched && !Object.hasOwn(Main.wm, 'insertWorkspace'));
+        writes = 0;
+        await close(pC);
+        check('[keep] removal while disabled is not tracked', wm.n_workspaces === 2 && writes === 0 && names() === want(['code', 'docs', 'music']),
+            `n=${wm.n_workspaces} writes=${writes} ${names()}`);
+        obj.enable();
+        check('[keep] enable patches insertWorkspace again', proto.insertWorkspace !== patched && Object.hasOwn(proto, 'insertWorkspace'));
+        await sleep(100);
+
+        // Tracking works again after enable.
+        const [pE, wE] = await open('osd-E');
+        wE.change_workspace_by_index(1, false);
+        await sleep(500);
+        await go(1);
+        await close(pD);
+        check('[keep] removal after re-enable is tracked', wm.n_workspaces === 2 && at(wE) === 0 && names() === want(['docs', 'music']),
+            `n=${wm.n_workspaces} E=${at(wE)} ${names()}`);
+        ext()._onShortcut();
+        await sleep(200);
+        check('[keep] Super+F2 after re-enable shows docs', ext()._label.text === 'docs', ext()._label.text);
+        await settle();
+
+        procs.forEach(p => p.force_exit());
+        await sleep(500);
+        wmPrefs.disconnect(writesId);
+        mutter.set_boolean('dynamic-workspaces', false);
     }
 }
