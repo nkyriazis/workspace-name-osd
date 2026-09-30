@@ -139,7 +139,7 @@ make shots-multi   # the same with three monitors, into docs/pr-evidence/all-mon
 
 ### Releasing
 
-Releases come from merged pull requests. Every PR is checked and tested on GitHub (the tests run in an Ubuntu 26.04 container, since that is where GNOME Shell 50 is packaged). A PR that changes anything in the extension folder must raise `version-name` in metadata.json and add a matching `## N (date)` entry to CHANGELOG.md, or the check fails. Changes to docs or tests alone need neither.
+Releases come from merged pull requests. Run `make test` on a GNOME 50 machine before merging, since GitHub has no GNOME Shell 50 to run the tests on. Every PR is checked on GitHub. A PR that changes anything in the extension folder must raise `version-name` in metadata.json and add a matching `## N (date)` entry to CHANGELOG.md, or the check fails. Changes to docs or tests alone need neither.
 
 When such a PR is merged, CI builds the zip with `make pack`, tags the commit `vN`, and publishes a GitHub release with the zip attached and the changelog entry as its notes. Upload that zip to [extensions.gnome.org](https://extensions.gnome.org/upload/) to reach everyone who installed from there. GNOME checks for updates once a day and installs them at the next login.
 

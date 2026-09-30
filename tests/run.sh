@@ -49,8 +49,13 @@ PY
   fi
   ERRS=$(grep -A8 'JS ERROR' "$TMP/shell.log" | grep -c "$UUID")
   echo "errors from extension: $ERRS"
-  grep -q "$TAG DONE failures=0\|$TAG DONE$" "$TMP/shell.log" && [ "$ERRS" = 0 ]
-  exit
+  if grep -q "$TAG DONE failures=0\|$TAG DONE$" "$TMP/shell.log" && [ "$ERRS" = 0 ]; then
+    exit 0
+  fi
+  # Without this a failure on CI leaves nothing to go on.
+  echo "--- last 150 lines of the nested shell's log" >&2
+  tail -n 150 "$TMP/shell.log" >&2
+  exit 1
 fi
 
 gsettings set org.gnome.shell enabled-extensions "['$UUID', '$WSOSD_DRIVER']"
