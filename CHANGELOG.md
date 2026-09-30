@@ -6,7 +6,7 @@ Version numbers match `version-name` in metadata.json and the `vN` git tags. Eac
 
 - Names stay with their workspaces. When GNOME removes an empty workspace, or you drop a window between two workspaces in the overview, the names now move along with the workspaces instead of staying at their old positions. A workspace removed while the screen is locked can still shift the names, because GNOME turns extensions off on the lock screen.
 - The name shows in the middle of every monitor. Renaming happens on one of them only (the one you clicked, or the one with the pointer for Super+F2). The new `all-monitors` setting goes back to a single screen.
-- The README explains how to update, and what to check when nothing shows up (thanks to Paschalis Panteleris).
+- The README explains how to update, how to move a copy installed from GitHub over to extensions.gnome.org so it updates by itself, and what to check when nothing shows up (thanks to Paschalis Panteleris).
 - The tests now run with one monitor and with three, and open real windows to check that names survive GNOME removing a workspace.
 
 ## 1 (2026-09-25)

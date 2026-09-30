@@ -28,6 +28,16 @@ Removing the last workspace, or adding one at the end, leaves the names alone. A
 
 GNOME 50 only for now (tested on Ubuntu 26.04).
 
+### From extensions.gnome.org
+
+This is the way to install it. GNOME then checks for new versions once a day and installs them at your next login, with nothing to do on your part.
+
+The extension is waiting for review there. Once it is listed, search for Workspace Name OSD on [extensions.gnome.org](https://extensions.gnome.org) and turn it on from its page, or find it in the Extension Manager app. Until then, install it from GitHub as described next.
+
+### From GitHub
+
+A copy installed this way is not updated automatically. See [Moving to extensions.gnome.org](#moving-to-extensionsgnomeorg) for switching over later.
+
 ```bash
 git clone https://github.com/nkyriazis/workspace-name-osd.git
 cd workspace-name-osd
@@ -68,9 +78,9 @@ journalctl --user -f -o cat | grep -iE "workspace-name|JS ERROR"
 
 ## Updating
 
-Extensions installed from GitHub don't update by themselves. To hear about new versions, click Watch on the GitHub page, choose Custom and tick Releases. What changed in each version is in [CHANGELOG.md](CHANGELOG.md).
+Installed from extensions.gnome.org, it updates by itself. What changed in each version is in [CHANGELOG.md](CHANGELOG.md).
 
-With the repo
+A copy installed from GitHub or from a release zip is not updated automatically. GNOME's updater asks only extensions.gnome.org, and that site ignores copies without the version number it adds to its own downloads. (Version 1 from GitHub still had one, so it will be picked up eventually, but not right away.) The best fix is to move to extensions.gnome.org once, as described below. Until you do, update by hand with the repo
 
 ```bash
 cd workspace-name-osd
@@ -81,6 +91,20 @@ make install
 or with the zip from the release, using the same `gnome-extensions install --force` command as above.
 
 Then log out and back in. GNOME Shell keeps running the old version until you do, and on Wayland there is no way to reload it.
+
+To hear about new versions while you update by hand, click Watch on the GitHub page, choose Custom and tick Releases.
+
+### Moving to extensions.gnome.org
+
+If you installed from GitHub or a zip before the extension was listed, switch once and GNOME keeps it up to date from then on. Your workspace names and settings are kept, since they are stored in GNOME's settings and not in the extension's folder.
+
+First remove the copy you installed by hand.
+
+```bash
+gnome-extensions uninstall workspace-name-osd@nkyriazis.github.com
+```
+
+Then install it from its page on extensions.gnome.org, and log out and back in once so the new copy is the one that runs.
 
 ## Uninstalling
 
