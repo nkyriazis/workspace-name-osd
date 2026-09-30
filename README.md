@@ -34,6 +34,12 @@ cd workspace-name-osd
 make install
 ```
 
+Or download the zip attached to the [latest release](https://github.com/nkyriazis/workspace-name-osd/releases/latest) and install that.
+
+```bash
+gnome-extensions install --force workspace-name-osd@nkyriazis.github.com.shell-extension.zip
+```
+
 Log out and back in so GNOME Shell picks up the new extension (on Wayland there is no other way), then turn it on.
 
 ```bash
@@ -59,6 +65,22 @@ If it is `ACTIVE` and still nothing appears, watch the log while switching works
 ```bash
 journalctl --user -f -o cat | grep -iE "workspace-name|JS ERROR"
 ```
+
+## Updating
+
+Extensions installed from GitHub don't update by themselves. To hear about new versions, click Watch on the GitHub page, choose Custom and tick Releases. What changed in each version is in [CHANGELOG.md](CHANGELOG.md).
+
+With the repo
+
+```bash
+cd workspace-name-osd
+git pull
+make install
+```
+
+or with the zip from the release, using the same `gnome-extensions install --force` command as above.
+
+Then log out and back in. GNOME Shell keeps running the old version until you do, and on Wayland there is no way to reload it.
 
 ## Uninstalling
 
@@ -114,6 +136,16 @@ make shots-multi   # the same with three monitors, into docs/pr-evidence/all-mon
 ```
 
 `tests/run.sh` takes the monitors from `WSOSD_MONITORS`, for example `WSOSD_MONITORS="1920x1080 1280x1024" tests/run.sh`.
+
+### Releasing
+
+Releases come from merged pull requests. Every PR is checked and tested on GitHub (the tests run in an Ubuntu 26.04 container, since that is where GNOME Shell 50 is packaged). A PR that changes anything in the extension folder must raise `version-name` in metadata.json and add a matching `## N (date)` entry to CHANGELOG.md, or the check fails. Changes to docs or tests alone need neither.
+
+When such a PR is merged, CI builds the zip with `make pack`, tags the commit `vN`, and publishes a GitHub release with the zip attached and the changelog entry as its notes. Upload that zip to [extensions.gnome.org](https://extensions.gnome.org/upload/) to reach everyone who installed from there. GNOME checks for updates once a day and installs them at the next login.
+
+People who update keep running the old code until they log out, but GNOME reloads the stylesheet and settings schema from disk every time the extension is turned back on, which happens at every unlock. So a release must never rename a CSS class or remove or retype a settings key, only add new ones. Otherwise the old code meets the new files after an unlock and the name shows up unstyled or not at all.
+
+[docs/how-it-works.md](docs/how-it-works.md) walks through the code.
 
 ## License
 
