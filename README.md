@@ -157,6 +157,7 @@ Changes to an extension normally take a logout to load, which makes testing slow
 make test          # run the checks, once with one monitor and once with three
 make shots         # regenerate the screenshots in docs/
 make shots-multi   # the same with three monitors, into docs/pr-evidence/all-monitors/
+make lint          # Shexli, the checker extensions.gnome.org suggests (pip install shexli)
 ```
 
 `tests/run.sh` takes the monitors from `WSOSD_MONITORS`, for example `WSOSD_MONITORS="1920x1080 1280x1024" tests/run.sh`.

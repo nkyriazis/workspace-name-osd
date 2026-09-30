@@ -2,6 +2,12 @@
 
 Version numbers match `version-name` in metadata.json and the `vN` git tags. Each release on GitHub has the installable zip attached. extensions.gnome.org numbers its uploads on its own, so its version numbers can differ from these.
 
+## 3 (2026-09-30)
+
+- Settings are now stored under GNOME's standard location for extensions, as extensions.gnome.org requires. Settings you changed (the shortcut, font size, timings or `all-monitors`) go back to their defaults once. Workspace names are not affected.
+- When turned off, the extension now disconnects every signal it connected itself instead of relying on its widgets being destroyed.
+- Every pull request is now checked with Shexli, the analyzer extensions.gnome.org suggests (`make lint` runs it locally).
+
 ## 2 (2026-09-30)
 
 - Names stay with their workspaces. When GNOME removes an empty workspace, or you drop a window between two workspaces in the overview, the names now move along with the workspaces instead of staying at their old positions. A workspace removed while the screen is locked can still shift the names, because GNOME turns extensions off on the lock screen.

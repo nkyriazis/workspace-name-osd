@@ -1,7 +1,7 @@
 UUID = workspace-name-osd@nkyriazis.github.com
 ZIP  = $(UUID).shell-extension.zip
 
-.PHONY: pack install uninstall test shots shots-multi clean
+.PHONY: pack lint install uninstall test shots shots-multi clean
 
 # What goes in the zip for users and extensions.gnome.org. Plain zip, so the
 # same command works here and on GitHub, where GNOME is not installed.
@@ -11,6 +11,10 @@ FILES = metadata.json extension.js stylesheet.css \
 pack:
 	rm -f $(ZIP)
 	cd $(UUID) && zip -q -X ../$(ZIP) $(FILES)
+
+# Needs Shexli (pip install shexli). CI runs this on every PR.
+lint: pack
+	tools/lint.sh $(ZIP)
 
 install: pack
 	gnome-extensions install --force $(ZIP)
