@@ -14,6 +14,12 @@ To rename, click the name while it is on screen, or press Super+F2 a second time
 
 ![Renaming a workspace](docs/rename.png)
 
+### Several monitors
+
+The name shows in the middle of every monitor. Renaming happens on one of them only. A click edits on the monitor you clicked, and Super+F2 edits on the monitor with the mouse pointer. The other monitors keep showing the saved name until you press Enter, and a click on any of them counts as a click outside, so it cancels.
+
+By default GNOME only switches workspaces on the primary monitor (the `workspaces-only-on-primary` setting of `org.gnome.mutter`). The other monitors then keep the same windows whatever the workspace, but they still show the name of the workspace you are on, which is the one the primary monitor shows. To have the name on one monitor only (the one with the pointer), turn off `all-monitors`.
+
 The names are kept in GNOME's own `workspace-names` setting, so they survive reboots and show up in anything else that reads them. GNOME ties a name to a position (the second workspace from the left), not to the windows on it. With dynamic workspaces GNOME removes a workspace once it is empty, and the ones after it move along. The extension moves their names with them, so each workspace keeps its own name and the removed one's name is dropped. The same happens when you drop a window between two workspaces in the overview to create a new one there. The new workspace starts unnamed and the ones after it keep theirs.
 
 Removing the last workspace, or adding one at the end, leaves the names alone. A new workspace at the end takes the name stored for its position, which is how your names come back after a restart. While the extension is disabled (for example while the screen is locked) it cannot see workspaces change, so names can end up on the wrong workspace if one is removed in that time.
@@ -88,6 +94,7 @@ There is no preferences window yet. All settings apply immediately, without logg
 | `font-size` | `96` | Size of the name in pixels |
 | `switch-hold-ms` | `900` | How long the name stays up after a switch |
 | `demand-hold-ms` | `2500` | How long it stays up after the shortcut |
+| `all-monitors` | `true` | Show the name on every monitor, rather than only on the one with the pointer |
 
 For example, to make the name bigger
 
@@ -101,9 +108,12 @@ gsettings --schemadir ~/.local/share/gnome-shell/extensions/workspace-name-osd@n
 Changes to an extension normally take a logout to load, which makes testing slow. The scripts here start a separate GNOME Shell with no window (headless, with a virtual 1920×1080 monitor) and throwaway settings, load the extension from this folder, and drive it with simulated keyboard and mouse input. Your own desktop and workspace names are never touched.
 
 ```bash
-make test     # run the checks
-make shots    # regenerate the screenshots in docs/
+make test          # run the checks, once with one monitor and once with three
+make shots         # regenerate the screenshots in docs/
+make shots-multi   # the same with three monitors, into docs/pr-evidence/all-monitors/
 ```
+
+`tests/run.sh` takes the monitors from `WSOSD_MONITORS`, for example `WSOSD_MONITORS="1920x1080 1280x1024" tests/run.sh`.
 
 ## License
 

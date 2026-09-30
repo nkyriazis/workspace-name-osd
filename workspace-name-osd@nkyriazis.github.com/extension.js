@@ -30,8 +30,13 @@ export default class WorkspaceOsdExtension extends Extension {
         this._timeoutId = 0;
         this._unredirectDisabled = false;
         this._grab = null;
+        this._overlays = [];
+        this._editing = null;
 
         this._buildUi();
+
+        this._monitorsId = Main.layoutManager.connect('monitors-changed',
+            () => this._onMonitorsChanged());
 
         this._switchId = global.workspace_manager.connect(
             'active-workspace-changed', () => this._onWorkspaceSwitched());
@@ -52,16 +57,20 @@ export default class WorkspaceOsdExtension extends Extension {
             this._switchId = 0;
         }
 
+        if (this._monitorsId) {
+            Main.layoutManager.disconnect(this._monitorsId);
+            this._monitorsId = 0;
+        }
+
         this._untrackWorkspaces();
 
         this._clearTimeout();
         this._releaseModal();
         this._restoreUnredirect();
 
-        Main.layoutManager.removeChrome(this._box);
-        this._box.destroy();
-        this._box = null;
-        this._label = null;
+        this._destroyOverlays();
+        this._entry.destroy();
+        this._hint.destroy();
         this._entry = null;
         this._hint = null;
 
@@ -70,17 +79,8 @@ export default class WorkspaceOsdExtension extends Extension {
     }
 
     _buildUi() {
-        this._box = new St.BoxLayout({
-            style_class: 'workspace-osd',
-            orientation: Clutter.Orientation.VERTICAL,
-            reactive: true,
-            visible: false,
-            opacity: 0,
-        });
-
-        this._label = new St.Label({style_class: 'workspace-osd-text'});
-        this._label.clutter_text.set_line_wrap(false);
-
+        // One entry and hint, moved into whichever overlay is being edited,
+        // so there is never more than one text box to type into.
         this._entry = new St.Entry({
             style_class: 'workspace-osd-entry',
             can_focus: true,
@@ -93,16 +93,6 @@ export default class WorkspaceOsdExtension extends Extension {
             visible: false,
         });
 
-        this._box.add_child(this._label);
-        this._box.add_child(this._entry);
-        this._box.add_child(this._hint);
-
-        // Same pattern as the shell's GrabHelper: while grabbed, clicks
-        // anywhere on screen are routed through the grab actor.
-        this._clickGesture = new Clutter.ClickGesture();
-        this._clickGesture.connect('recognize', () => this._onClick());
-        this._box.add_action(this._clickGesture);
-
         this._entry.clutter_text.connect('activate', () => this._commit());
         this._entry.clutter_text.connect('key-press-event', (_actor, event) => {
             if (event.get_key_symbol() === Clutter.KEY_Escape) {
@@ -112,7 +102,76 @@ export default class WorkspaceOsdExtension extends Extension {
             return Clutter.EVENT_PROPAGATE;
         });
 
-        Main.layoutManager.addTopChrome(this._box);
+        this._buildOverlays();
+    }
+
+    // One overlay per monitor, each centred on its own monitor.
+    _buildOverlays() {
+        this._overlays = Main.layoutManager.monitors.map(monitor => {
+            const box = new St.BoxLayout({
+                style_class: 'workspace-osd',
+                orientation: Clutter.Orientation.VERTICAL,
+                reactive: true,
+                visible: false,
+                opacity: 0,
+            });
+
+            const label = new St.Label({style_class: 'workspace-osd-text'});
+            label.clutter_text.set_line_wrap(false);
+            box.add_child(label);
+
+            const overlay = {monitorIndex: monitor.index, box, label};
+
+            // Same pattern as the shell's GrabHelper: while grabbed, clicks
+            // anywhere on screen are routed through the grab actor.
+            overlay.clickGesture = new Clutter.ClickGesture();
+            overlay.clickGesture.connect('recognize', () => this._onClick(overlay));
+            box.add_action(overlay.clickGesture);
+
+            Main.layoutManager.addTopChrome(box);
+            return overlay;
+        });
+    }
+
+    _destroyOverlays() {
+        // The entry and hint outlive the overlays; take them out first.
+        for (const actor of [this._entry, this._hint])
+            actor.get_parent()?.remove_child(actor);
+
+        for (const {box} of this._overlays) {
+            Main.layoutManager.removeChrome(box);
+            box.destroy();
+        }
+        this._overlays = [];
+        this._editing = null;
+    }
+
+    // Hotplug or a resolution change. Start over with fresh overlays; an
+    // edit in progress is dropped since its monitor may be gone.
+    _onMonitorsChanged() {
+        this._clearTimeout();
+        this._releaseModal();
+        this._destroyOverlays();
+        this._buildOverlays();
+        this._state = State.HIDDEN;
+        this._restoreUnredirect();
+    }
+
+    // The overlays that take part in showing the name. With all-monitors
+    // off only the monitor with the pointer shows it, as before.
+    _activeOverlays() {
+        if (this._settings.get_boolean('all-monitors'))
+            return this._overlays;
+
+        const monitor = Main.layoutManager.currentMonitor ??
+            Main.layoutManager.primaryMonitor;
+        const overlay = this._overlayFor(monitor);
+        return overlay ? [overlay] : [];
+    }
+
+    _overlayFor(monitor) {
+        return this._overlays.find(o => o.monitorIndex === monitor?.index) ??
+            this._overlays[0] ?? null;
     }
 
     // --- triggers ---------------------------------------------------------
@@ -125,56 +184,83 @@ export default class WorkspaceOsdExtension extends Extension {
 
     _onShortcut() {
         if (this._state === State.SHOWING)
-            this._edit();
+            this._edit(this._shortcutOverlay());
         else if (this._state === State.HIDDEN)
             this._show(this._settings.get_int('demand-hold-ms'));
     }
 
-    _onClick() {
+    _onClick(overlay) {
         if (this._state === State.SHOWING) {
-            this._edit();
+            this._edit(overlay);
             return;
         }
 
-        // A click outside the panel cancels, like any other popup.
-        if (this._state === State.EDITING) {
-            const event = this._clickGesture.get_point_event(0);
+        // A click outside the panel cancels, like any other popup. The grab
+        // sends clicks on any monitor to the overlay being edited.
+        if (this._state === State.EDITING && overlay === this._editing) {
+            const event = overlay.clickGesture.get_point_event(0);
             const target = global.stage.get_event_actor(event);
-            if (!this._box.contains(target))
+            if (!overlay.box.contains(target))
                 this._cancel();
         }
+    }
+
+    // Super+F2 edits on the monitor with the pointer, if it shows the name.
+    _shortcutOverlay() {
+        const active = this._activeOverlays();
+        const here = this._overlayFor(Main.layoutManager.currentMonitor);
+        return active.includes(here) ? here : active[0];
     }
 
     // --- display ----------------------------------------------------------
 
     _show(holdMs) {
         this._index = global.workspace_manager.get_active_workspace_index();
-        this._label.text = Meta.prefs_get_workspace_name(this._index);
+        const name = Meta.prefs_get_workspace_name(this._index);
+        this._editing = null;
 
-        this._label.show();
+        const active = this._activeOverlays();
+        for (const overlay of this._overlays) {
+            if (!active.includes(overlay))
+                this._hideOverlay(overlay);
+        }
+        for (const {label} of active) {
+            label.text = name;
+            label.show();
+        }
         this._entry.hide();
         this._hint.hide();
         this._applyFontSize();
 
-        this._fadeIn();
+        this._fadeIn(active);
         this._state = State.SHOWING;
         this._scheduleHide(holdMs);
     }
 
-    _edit() {
+    // Only the overlay on one monitor turns into a text box. The others keep
+    // showing the saved name until Enter, so no screen shows a name that is
+    // not stored yet.
+    _edit(overlay) {
+        if (!overlay)
+            return;
         this._clearTimeout();
 
-        this._grab = Main.pushModal(this._box, {
+        this._grab = Main.pushModal(overlay.box, {
             actionMode: Shell.ActionMode.POPUP,
         });
         this._state = State.EDITING;
+        this._editing = overlay;
 
-        this._label.hide();
-        this._entry.text = this._label.text;
+        overlay.label.hide();
+        this._entry.text = overlay.label.text;
+        for (const actor of [this._entry, this._hint]) {
+            actor.get_parent()?.remove_child(actor);
+            overlay.box.add_child(actor);
+        }
         this._entry.show();
         this._hint.show();
         this._applyFontSize();
-        this._fadeIn();
+        this._fadeIn([overlay]);
 
         this._entry.grab_key_focus();
         this._entry.clutter_text.set_selection(0, -1);
@@ -195,30 +281,53 @@ export default class WorkspaceOsdExtension extends Extension {
         this._hide();
     }
 
-    _fadeIn() {
+    _fadeIn(overlays) {
         this._suppressUnredirect();
-        this._box.remove_all_transitions();
-        this._box.show();
-        this._position();
-        this._box.ease({
-            opacity: 255,
-            duration: FADE_IN_MS,
-            mode: EASE_MODE,
-        });
+        for (const overlay of overlays) {
+            const {box} = overlay;
+            box.remove_all_transitions();
+            box.show();
+            this._position(overlay);
+            box.ease({
+                opacity: 255,
+                duration: FADE_IN_MS,
+                mode: EASE_MODE,
+            });
+        }
     }
 
+    // Fades every overlay out. The state and the compositor flag change once,
+    // when the last one has gone.
     _hide() {
         this._clearTimeout();
-        this._box.ease({
-            opacity: 0,
-            duration: FADE_OUT_MS,
-            mode: EASE_MODE,
-            onComplete: () => {
-                this._box.hide();
-                this._state = State.HIDDEN;
-                this._restoreUnredirect();
-            },
-        });
+        const shown = this._overlays.filter(o => o.box.visible);
+        let left = shown.length;
+        const done = () => {
+            this._state = State.HIDDEN;
+            this._restoreUnredirect();
+        };
+        if (left === 0) {
+            done();
+            return;
+        }
+        for (const {box} of shown) {
+            box.ease({
+                opacity: 0,
+                duration: FADE_OUT_MS,
+                mode: EASE_MODE,
+                onComplete: () => {
+                    box.hide();
+                    if (--left === 0)
+                        done();
+                },
+            });
+        }
+    }
+
+    _hideOverlay({box}) {
+        box.remove_all_transitions();
+        box.opacity = 0;
+        box.hide();
     }
 
     _scheduleHide(ms) {
@@ -239,19 +348,19 @@ export default class WorkspaceOsdExtension extends Extension {
 
     _applyFontSize() {
         const style = `font-size: ${this._settings.get_int('font-size')}px;`;
-        this._label.style = style;
+        for (const {label} of this._overlays)
+            label.style = style;
         this._entry.style = style;
     }
 
-    _position() {
-        const monitor = Main.layoutManager.currentMonitor ??
-            Main.layoutManager.primaryMonitor;
+    _position({box, monitorIndex}) {
+        const monitor = Main.layoutManager.monitors[monitorIndex];
         if (!monitor)
             return;
 
-        const [, width] = this._box.get_preferred_width(-1);
-        const [, height] = this._box.get_preferred_height(width);
-        this._box.set_position(
+        const [, width] = box.get_preferred_width(-1);
+        const [, height] = box.get_preferred_height(width);
+        box.set_position(
             monitor.x + Math.floor((monitor.width - width) / 2),
             monitor.y + Math.floor((monitor.height - height) / 2));
     }
