@@ -22,5 +22,10 @@
       <default>2500</default>
       <summary>How long the name stays up when shown with the shortcut, in milliseconds</summary>
     </key>
+    <key name="all-monitors" type="b">
+      <default>true</default>
+      <summary>Show the name on every monitor</summary>
+      <description>When off, the name only shows on the monitor with the mouse pointer.</description>
+    </key>
   </schema>
 </schemalist>

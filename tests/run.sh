@@ -4,6 +4,10 @@
 #
 #   tests/run.sh           run the self-test
 #   tests/run.sh shots     regenerate README screenshots into docs/
+#                          (with several monitors, into docs/pr-evidence/all-monitors/)
+#
+# WSOSD_MONITORS sets the virtual monitors, e.g. "1920x1080 1280x1024".
+# The default is one 1920x1080 monitor.
 set -u
 HERE=$(cd "$(dirname "$0")" && pwd)
 REPO=$(dirname "$HERE")
@@ -19,21 +23,26 @@ if [ -z "${WSOSD_INNER:-}" ]; then
   glib-compile-schemas "$EXT/$UUID/schemas"
   case $MODE in
     test)  DRIVER=selftest@workspace-name-osd;    TAG=OSDTEST ;;
-    shots) DRIVER=screenshots@workspace-name-osd; TAG=OSDSHOT; mkdir -p "$REPO/docs" ;;
+    shots) DRIVER=screenshots@workspace-name-osd; TAG=OSDSHOT ;;
     *) echo "usage: $0 [test|shots]"; exit 2 ;;
   esac
   cp -r "$HERE/$DRIVER" "$EXT/"
+  OUT="$REPO/docs"
+  set -- ${WSOSD_MONITORS:-1920x1080}
+  [ $# -gt 1 ] && OUT="$REPO/docs/pr-evidence/all-monitors"
+  [ "$MODE" = shots ] && mkdir -p "$OUT"
   WSOSD_INNER=1 WSOSD_DRIVER=$DRIVER WSOSD_TAG=$TAG WSOSD_LOG="$TMP/shell.log" \
-    WSOSD_SHOTS="$REPO/docs" XDG_CONFIG_HOME="$TMP/config" XDG_DATA_HOME="$TMP/data" \
+    WSOSD_SHOTS="$REPO/docs" WSOSD_MONITORS="${WSOSD_MONITORS:-1920x1080}" XDG_CONFIG_HOME="$TMP/config" XDG_DATA_HOME="$TMP/data" \
     dbus-run-session -- "$0" "$MODE" > /dev/null 2>&1
   grep "$TAG" "$TMP/shell.log" | sed "s/.*$TAG //"
   if [ "$MODE" = shots ]; then
-    python3 - "$REPO/docs" <<'PY'
+    python3 - "$OUT" <<'PY'
 import sys, pathlib
 from PIL import Image
 for f in pathlib.Path(sys.argv[1]).glob("*.png"):
     im = Image.open(f).convert("RGB")
-    im.thumbnail((1280, 720), Image.LANCZOS)
+    # Multi-monitor shots are wide; keep them readable.
+    im.thumbnail((2400, 720) if im.size[0] > 2 * im.size[1] else (1280, 720), Image.LANCZOS)
     im.save(f, optimize=True)
     print(f"resized {f.name} to {im.size[0]}x{im.size[1]}, {f.stat().st_size // 1024} KB")
 PY
@@ -61,7 +70,9 @@ else
 fi
 # Test windows must only ever reach the nested shell.
 unset DISPLAY WAYLAND_DISPLAY
-gnome-shell --headless --virtual-monitor 1920x1080 > "$WSOSD_LOG" 2>&1 &
+MONITOR_ARGS=()
+for m in $WSOSD_MONITORS; do MONITOR_ARGS+=(--virtual-monitor "$m"); done
+gnome-shell --headless "${MONITOR_ARGS[@]}" > "$WSOSD_LOG" 2>&1 &
 PID=$!
-for _ in $(seq 1 90); do grep -q "$WSOSD_TAG DONE" "$WSOSD_LOG" && break; sleep 1; done
+for _ in $(seq 1 180); do grep -q "$WSOSD_TAG DONE" "$WSOSD_LOG" && break; sleep 1; done
 sleep 1; kill $PID 2>/dev/null; sleep 2; kill -9 $PID 2>/dev/null

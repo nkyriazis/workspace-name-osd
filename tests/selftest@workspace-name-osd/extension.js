@@ -16,6 +16,64 @@ function check(name, cond, detail = '') {
     say(`${cond ? 'PASS' : 'FAIL'} ${name}${detail ? ` (${detail})` : ''}`);
 }
 
+// Views over the per-monitor overlays of the running extension.
+function helpers(ext) {
+    const boxes = () => ext()._overlays.map(ov => ov.box);
+    const walk = (actor, pred, out = []) => {
+        if (pred(actor))
+            out.push(actor);
+        for (const c of actor.get_children())
+            walk(c, pred, out);
+        return out;
+    };
+    const classed = cls => a => a.has_style_class_name?.(cls);
+    return {
+        boxes,
+        labels: () => ext()._overlays.map(ov => ov.label.text),
+        allShown: () => boxes().every(b => b.visible && b.opacity > 0),
+        allHidden: () => boxes().every(b => !b.visible),
+        // Visible text entries anywhere in the shell's UI, not just ours.
+        entries: () => walk(Main.layoutManager.uiGroup, classed('workspace-osd-entry')).filter(a => a.is_mapped()),
+        stageBoxes: () => walk(Main.layoutManager.uiGroup, classed('workspace-osd')).length,
+        others: () => ext()._overlays.filter(ov => ov !== ext()._editing),
+        here: () => ext()._overlays.find(ov => ov.monitorIndex === Main.layoutManager.currentMonitor?.index) ?? ext()._overlays[0],
+        checkCentred(tag) {
+            for (const ov of ext()._overlays) {
+                const m = Main.layoutManager.monitors[ov.monitorIndex];
+                const [x, y] = ov.box.get_transformed_position();
+                const [w, h] = ov.box.get_transformed_size();
+                const dx = x + w / 2 - (m.x + m.width / 2), dy = y + h / 2 - (m.y + m.height / 2);
+                check(`overlay centred on monitor ${ov.monitorIndex}${tag}`, Math.abs(dx) <= 2 && Math.abs(dy) <= 2,
+                    `off by ${dx.toFixed(1)},${dy.toFixed(1)} box ${Math.round(x)},${Math.round(y)} ${Math.round(w)}x${Math.round(h)}`);
+            }
+        },
+    };
+}
+
+// Lay the monitors out again through org.gnome.Mutter.DisplayConfig, in
+// reverse order from left to right, so every monitor but a middle one moves.
+async function applyReversedMonitorConfig() {
+    const call = (method, params) => new Promise((resolve, reject) => {
+        Gio.DBus.session.call('org.gnome.Mutter.DisplayConfig', '/org/gnome/Mutter/DisplayConfig',
+            'org.gnome.Mutter.DisplayConfig', method, params, null, Gio.DBusCallFlags.NONE, -1, null,
+            (conn, res) => { try { resolve(conn.call_finish(res)); } catch (e) { reject(e); } });
+    });
+    const [serial, monitors, logical] = (await call('GetCurrentState', null)).deep_unpack();
+    const modeOf = connector => {
+        const mon = monitors.find(([[c]]) => c === connector);
+        const mode = mon[1].find(([, , , , , , props]) => props['is-current']?.deep_unpack());
+        return mode[0];
+    };
+    const sorted = [...logical].sort((a, b) => a[0] - b[0]).reverse();
+    let x = 0;
+    const config = sorted.map(([oldX, , scale, transform, primary, mons]) => {
+        const lx = x;
+        x += Main.layoutManager.monitors.find(m => m.x === oldX).width;
+        return [lx, 0, scale, transform, primary, mons.map(([connector]) => [connector, modeOf(connector), {}])];
+    });
+    await call('ApplyMonitorsConfig', new GLib.Variant('(uua(iiduba(ssa{sv}))a{sv})', [serial, 1, config, {}]));
+}
+
 export default class SelfTest extends Extension {
     enable() {
         // Let the session settle, then run once.
@@ -34,20 +92,24 @@ export default class SelfTest extends Extension {
         const wmPrefs = new Gio.Settings({schema_id: 'org.gnome.desktop.wm.preferences'});
         const s = () => ext()._state;
         const settle = () => sleep(900 + 350 + 400);
+        const o = helpers(ext);
 
         check('extension loaded', !!ext(), `state=${Main.extensionManager.lookup(UUID)?.state}`);
+        say(`monitors ${JSON.stringify(Main.layoutManager.monitors.map(m => [m.x, m.y, m.width, m.height]))} primary=${Main.layoutManager.primaryIndex} onlyPrimary=${Meta.prefs_get_workspaces_only_on_primary()}`);
         check('4 workspaces', wm.n_workspaces >= 4, `n=${wm.n_workspaces}`);
 
         // 1. switch shows the name, then hides
         wm.get_workspace_by_index(1).activate(global.get_current_time());
         await sleep(200);
         check('switch -> SHOWING', s() === SHOWING, `state=${s()}`);
-        check('label text is ws 2 name', ext()._label.text === 'two', `text=${ext()._label.text}`);
-        check('box visible', ext()._box.visible && ext()._box.opacity > 0, `opacity=${ext()._box.opacity}`);
+        check('label text is ws 2 name on every monitor', o.labels().every(t => t === 'two'), `texts=${o.labels()}`);
+        check('box visible on every monitor', o.allShown(), `opacity=${o.boxes().map(b => b.opacity)}`);
+        check('one overlay per monitor', ext()._overlays.length === Main.layoutManager.monitors.length, `overlays=${ext()._overlays.length}`);
+        o.checkCentred('');
         check('unredirect suppressed while showing', ext()._unredirectDisabled === true);
         await settle();
         check('auto-hide -> HIDDEN', s() === HIDDEN, `state=${s()}`);
-        check('box hidden', !ext()._box.visible);
+        check('box hidden on every monitor', o.allHidden());
         check('unredirect restored', ext()._unredirectDisabled === false);
 
         // 2. shortcut once shows, twice edits
@@ -57,7 +119,9 @@ export default class SelfTest extends Extension {
         ext()._onShortcut();
         await sleep(200);
         check('shortcut again -> EDITING', s() === EDITING, `state=${s()}`);
-        check('entry visible, label hidden', ext()._entry.visible && !ext()._label.visible);
+        check('entry visible, label hidden', ext()._entry.visible && !ext()._editing.label.visible);
+        check('exactly one entry while editing', o.entries().length === 1, `entries=${o.entries().length}`);
+        check('other monitors keep showing the name', o.others().every(ov => ov.box.visible && ov.label.visible && ov.label.text === 'two'));
         check('entry prefilled', ext()._entry.text === 'two', `text=${ext()._entry.text}`);
         check('modal grab held', ext()._grab !== null);
 
@@ -79,16 +143,18 @@ export default class SelfTest extends Extension {
         check('commit saved trimmed name at index 1', names[1] === 'renamed', `names=${JSON.stringify(names)}`);
         check('other names untouched', names[0] === 'one' && names[2] === 'three' && names[3] === 'four', `names=${JSON.stringify(names)}`);
         check('grab released after commit', ext()._grab === null);
-        check('commit -> SHOWING new name', s() === SHOWING && ext()._label.text === 'renamed', `state=${s()} text=${ext()._label.text}`);
+        check('commit -> SHOWING new name everywhere', s() === SHOWING && o.labels().every(t => t === 'renamed'), `state=${s()} texts=${o.labels()}`);
+        check('no entry after commit', o.entries().length === 0);
         await settle();
         check('after commit -> HIDDEN', s() === HIDDEN, `state=${s()}`);
 
         // 5. click on showing label edits; cancel restores nothing
         ext()._onShortcut();
         await sleep(200);
-        ext()._onClick();
+        ext()._onClick(ext()._overlays.at(-1));
         await sleep(200);
         check('click while SHOWING -> EDITING', s() === EDITING, `state=${s()}`);
+        check('click edits on the clicked monitor', ext()._editing === ext()._overlays.at(-1));
         ext()._entry.text = 'should-not-save';
         ext()._cancel();
         await sleep(200);
@@ -112,7 +178,8 @@ export default class SelfTest extends Extension {
         // 7. live font size
         ext()._settings.set_int('font-size', 150);
         ext()._onShortcut(); await sleep(200);
-        check('font size applied live', ext()._label.style.includes('150px'), `style=${ext()._label.style}`);
+        check('font size applied live', ext()._overlays.every(ov => ov.label.style.includes('150px')), `style=${ext()._overlays[0].label.style}`);
+        o.checkCentred(' at 150px');
         await sleep(2500 + 350 + 400);
 
         // 8. rapid switching does not wedge the state
@@ -131,7 +198,9 @@ export default class SelfTest extends Extension {
         const obj = ext();
         obj.disable();
         check('disable while editing cleared grab', obj._grab === null);
-        check('disable nulled box', obj._box === null);
+        check('disable removed overlays', obj._overlays.length === 0 && obj._entry === null);
+        check('disable left no overlay actors', o.stageBoxes() === 0, `boxes=${o.stageBoxes()}`);
+        check('disable balanced unredirect', obj._unredirectDisabled === false);
         obj.enable();
         await sleep(100);
         wm.get_workspace_by_index(1).activate(global.get_current_time());
@@ -140,14 +209,142 @@ export default class SelfTest extends Extension {
         await settle();
         check('hides after re-enable', s() === HIDDEN, `state=${s()}`);
 
-        await this._realInput(ext, wm, wmPrefs, s, settle);
+        // 10. all-monitors off shows the name on one monitor only
+        ext()._settings.set_boolean('all-monitors', false);
+        ext()._onShortcut(); await sleep(200);
+        const shown = ext()._overlays.filter(ov => ov.box.visible);
+        check('all-monitors off -> one overlay', shown.length === 1, `shown=${shown.length}`);
+        check('all-monitors off -> on current monitor',
+            shown[0]?.monitorIndex === (Main.layoutManager.currentMonitor ?? Main.layoutManager.primaryMonitor).index,
+            `shown=${shown[0]?.monitorIndex}`);
+        ext()._onShortcut(); await sleep(200);
+        check('all-monitors off -> edits that overlay', ext()._editing === shown[0]);
+        ext()._cancel();
+        await settle();
+        check('all-monitors off -> HIDDEN', s() === HIDDEN && o.allHidden(), `state=${s()}`);
+        ext()._settings.set_boolean('all-monitors', true);
+
+        // 11. monitors-changed rebuilds the overlays, even mid-edit
+        ext()._onShortcut(); await sleep(100);
+        ext()._onShortcut(); await sleep(100);
+        const oldBoxes = o.boxes();
+        await this._reconfigureMonitors();
+        check('monitors-changed dropped the edit', s() === HIDDEN && ext()._grab === null, `state=${s()}`);
+        check('monitors-changed rebuilt overlays', ext()._overlays.length === Main.layoutManager.monitors.length &&
+            o.boxes().every(b => !oldBoxes.includes(b)), `overlays=${ext()._overlays.length} monitors=${Main.layoutManager.monitors.length}`);
+        check('monitors-changed left no stale actors', o.stageBoxes() === ext()._overlays.length, `boxes=${o.stageBoxes()}`);
+        check('monitors-changed balanced unredirect', ext()._unredirectDisabled === false);
+        wm.get_workspace_by_index(2).activate(global.get_current_time());
+        await sleep(200);
+        check('shows after monitors-changed', s() === SHOWING && o.allShown(), `state=${s()}`);
+        o.checkCentred(' after monitors-changed');
+        await settle();
+
+        await this._realInput(ext, wm, wmPrefs, s, settle, o);
         await this._keepNames(ext, wm, wmPrefs, s, settle);
     }
 
     // Phase 2: the same flows through synthetic keyboard and pointer events,
     // so the keybinding, the entry's key handling and the click gesture are
     // exercised the way a person would use them.
-    async _realInput(ext, wm, wmPrefs, s, settle) {
+    // Ask mutter for a new monitor layout, which makes it emit
+    // monitors-changed like a hotplug or a resolution change does. Falls back to emitting the
+    // monitor manager signal if the D-Bus call is refused.
+    // Phase 3: pointer and keyboard across monitors.
+    async _multiMonitorInput({ext, wm, wmPrefs, s, settle, o, superF2, type, tap, clickAt, boxCentre, ptr, now}) {
+        say('--- multi-monitor phase');
+        const monitors = Main.layoutManager.monitors;
+        const moveTo = async m => {
+            ptr.notify_absolute_motion(now(), m.x + 50, m.y + 50);
+            await sleep(120);
+        };
+
+        // Super+F2 twice edits on the monitor with the pointer, for each monitor
+        for (const m of monitors) {
+            await moveTo(m);
+            await superF2();
+            check(`[multi] Super+F2 on monitor ${m.index} -> SHOWING on all`, s() === SHOWING && o.allShown(), `state=${s()}`);
+            await superF2();
+            check(`[multi] Super+F2 again edits on monitor ${m.index}`, s() === EDITING && ext()._editing?.monitorIndex === m.index,
+                `state=${s()} editing=${ext()._editing?.monitorIndex}`);
+            check(`[multi] monitor ${m.index} one entry, inside its overlay`,
+                o.entries().length === 1 && ext()._editing.box.contains(o.entries()[0]), `entries=${o.entries().length}`);
+            check(`[multi] monitor ${m.index} others show the name`, o.others().every(ov => ov.box.visible && ov.label.visible));
+            await tap(Clutter.KEY_Escape);
+            await settle();
+            check(`[multi] monitor ${m.index} Esc -> HIDDEN`, s() === HIDDEN && o.allHidden(), `state=${s()}`);
+        }
+
+        // Typing on a secondary monitor and Enter saves, shown everywhere
+        const ws = wm.get_active_workspace_index();
+        const last = monitors.at(-1);
+        await moveTo(last);
+        await superF2();
+        await superF2();
+        await type('side');
+        await tap(Clutter.KEY_Return);
+        check('[multi] Enter on secondary saves', wmPrefs.get_strv('workspace-names')[ws] === 'side',
+            `names=${JSON.stringify(wmPrefs.get_strv('workspace-names'))}`);
+        check('[multi] new name on every monitor', o.labels().every(t => t === 'side'), `texts=${o.labels()}`);
+        await settle();
+
+        // Click on the name on each monitor edits there
+        for (const ov of ext()._overlays) {
+            await superF2();
+            const [cx, cy] = boxCentre(ov);
+            await clickAt(cx, cy);
+            check(`[multi] click on name on monitor ${ov.monitorIndex} edits there`,
+                s() === EDITING && ext()._editing === ov, `state=${s()} editing=${ext()._editing?.monitorIndex}`);
+            await tap(Clutter.KEY_Escape);
+            await settle();
+        }
+
+        // Clicking another monitor's name while editing cancels, no second entry
+        await superF2();
+        const [ax, ay] = boxCentre(ext()._overlays[0]);
+        await clickAt(ax, ay);
+        check('[multi] editing on monitor 0', s() === EDITING && ext()._editing === ext()._overlays[0]);
+        const [ox, oy] = boxCentre(ext()._overlays[1]);
+        await clickAt(ox, oy);
+        check('[multi] click on other monitor name cancels', s() !== EDITING && ext()._grab === null,
+            `state=${s()} at ${Math.round(ox)},${Math.round(oy)}`);
+        await settle();
+        check('[multi] -> HIDDEN', s() === HIDDEN && o.allHidden(), `state=${s()}`);
+        check('[multi] no entry on screen after cancel', o.entries().length === 0, `entries=${o.entries().length}`);
+
+        // Clicking empty space on another monitor cancels
+        await superF2();
+        await superF2();
+        const editIdx = ext()._editing.monitorIndex;
+        const other = monitors.find(m => m.index !== editIdx);
+        await clickAt(other.x + 30, other.y + other.height - 30);
+        check('[multi] click on empty area of other monitor cancels', s() !== EDITING && ext()._grab === null, `state=${s()}`);
+        check('[multi] cancel did not save', wmPrefs.get_strv('workspace-names')[ws] === 'side');
+        await settle();
+        check('[multi] unredirect balanced at the end', ext()._unredirectDisabled === false);
+    }
+
+    async _reconfigureMonitors() {
+        const lm = Main.layoutManager;
+        let fired = false;
+        const id = lm.connect('monitors-changed', () => { fired = true; });
+        try {
+            await applyReversedMonitorConfig();
+            for (let i = 0; i < 20 && !fired; i++)
+                await sleep(100);
+        } catch (e) {
+            say(`note: ApplyMonitorsConfig failed (${e.message}), emitting instead`);
+        }
+        if (!fired) {
+            say('note: no monitors-changed from mutter, emitting on the monitor manager');
+            global.backend.get_monitor_manager().emit('monitors-changed');
+        }
+        lm.disconnect(id);
+        await sleep(200);
+        say(`monitors now ${JSON.stringify(lm.monitors.map(m => [m.x, m.y, m.width, m.height]))}`);
+    }
+
+    async _realInput(ext, wm, wmPrefs, s, settle, o) {
         say('--- real input phase');
         const seat = Clutter.get_default_backend().get_default_seat();
         const kbd = seat.create_virtual_device(Clutter.InputDeviceType.KEYBOARD_DEVICE);
@@ -174,9 +371,9 @@ export default class SelfTest extends Extension {
             ptr.notify_button(now(), Clutter.BUTTON_PRIMARY, Clutter.ButtonState.RELEASED);
             await sleep(250);
         };
-        const boxCentre = () => {
-            const [x, y] = ext()._box.get_transformed_position();
-            const [w, h] = ext()._box.get_transformed_size();
+        const boxCentre = (ov = ext()._editing ?? o.here()) => {
+            const [x, y] = ov.box.get_transformed_position();
+            const [w, h] = ov.box.get_transformed_size();
             return [x + w / 2, y + h / 2];
         };
         const superF2 = () => tap(Clutter.KEY_Super_L, Clutter.KEY_F2);
@@ -222,9 +419,10 @@ export default class SelfTest extends Extension {
         check('[real] click inside panel keeps EDITING', s() === EDITING, `state=${s()}`);
 
         // Click outside cancels
-        const [bx, by] = ext()._box.get_transformed_position();
-        const [bw, bh] = ext()._box.get_transformed_size();
-        const outX = bx + bw + 40 < global.stage.width ? bx + bw + 40 : Math.max(0, bx - 40);
+        const [bx, by] = ext()._editing.box.get_transformed_position();
+        const [bw, bh] = ext()._editing.box.get_transformed_size();
+        const mon = Main.layoutManager.monitors[ext()._editing.monitorIndex];
+        const outX = bx + bw + 40 < mon.x + mon.width ? bx + bw + 40 : Math.max(mon.x, bx - 40);
         await clickAt(outX, by + bh / 2);
         check('[real] click outside cancels', s() !== EDITING && ext()._grab === null, `state=${s()} at ${Math.round(outX)}`);
         await settle();
@@ -235,6 +433,9 @@ export default class SelfTest extends Extension {
         await sleep(150);
         check('[real] Ctrl+Alt+Right -> SHOWING', s() === SHOWING, `state=${s()} ws=${wm.get_active_workspace_index()}`);
         await settle();
+
+        if (Main.layoutManager.monitors.length > 1)
+            await this._multiMonitorInput({ext, wm, wmPrefs, s, settle, o, superF2, type, tap, clickAt, boxCentre, ptr, now});
 
         wmPrefs.set_strv('workspace-names', before);
         kbd.run_dispose?.();
@@ -263,8 +464,25 @@ export default class SelfTest extends Extension {
             for (let i = 0; i < 100; i++) {
                 const win = global.get_window_actors().map(a => a.meta_window)
                     .find(w => w.get_title() === title);
-                if (win)
+                if (win) {
+                    // Only the primary monitor has workspaces by default
+                    // (workspaces-only-on-primary); elsewhere a window is on
+                    // all of them and never keeps a workspace alive. The
+                    // shell places a new window when it first maps, which
+                    // can undo an early move, so wait until it stays put.
+                    const primary = Main.layoutManager.primaryIndex;
+                    let stable = 0;
+                    for (let j = 0; j < 60 && stable < 3; j++) {
+                        if (win.get_monitor() !== primary)
+                            win.move_to_monitor(primary);
+                        stable = win.get_monitor() === primary && !win.is_on_all_workspaces()
+                            ? stable + 1 : 0;
+                        await sleep(100);
+                    }
+                    if (stable < 3)
+                        say(`note ${title} monitor=${win.get_monitor()} primary=${primary} all=${win.is_on_all_workspaces()}`);
                     return [proc, win];
+                }
                 await sleep(100);
             }
             throw new Error(`window ${title} did not appear`);
@@ -279,7 +497,7 @@ export default class SelfTest extends Extension {
         };
         const shown = async i => {
             await go(i);
-            return ext()._label.text;
+            return ext()._overlays[0].label.text;
         };
         const at = win => win.get_workspace().index();
 
@@ -300,7 +518,7 @@ export default class SelfTest extends Extension {
         wC.change_workspace_by_index(2, false);
         await sleep(1000);
         check('[keep] real windows on workspaces 1 to 3', wm.n_workspaces === 4 && at(wA) === 0 && at(wB) === 1 && at(wC) === 2,
-            `n=${wm.n_workspaces} A=${at(wA)} B=${at(wB)} C=${at(wC)}`);
+            `n=${wm.n_workspaces} A=${at(wA)} B=${at(wB)} C=${at(wC)} mon=${[wA, wB, wC].map(w => w.get_monitor())} all=${[wA, wB, wC].map(w => w.is_on_all_workspaces())} primary=${Main.layoutManager.primaryIndex}`);
         check('[keep] appended workspaces leave names alone', names() === want(['main', 'mail', 'code', 'music']), names());
 
         // The shell removes workspace 2 by itself once its only window is gone.
@@ -310,8 +528,8 @@ export default class SelfTest extends Extension {
             `n=${wm.n_workspaces} C=${at(wC)}`);
         check('[keep] names moved down with their workspaces', names() === want(['main', 'code', 'music']), names());
         check('[keep] mutter reads the moved name', Meta.prefs_get_workspace_name(1) === 'code', Meta.prefs_get_workspace_name(1));
-        check('[keep] switching to the old code workspace shows code', await shown(1) === 'code', ext()._label.text);
-        check('[keep] trailing empty workspace keeps music', await shown(2) === 'music', ext()._label.text);
+        check('[keep] switching to the old code workspace shows code', await shown(1) === 'code', ext()._overlays[0].label.text);
+        check('[keep] trailing empty workspace keeps music', await shown(2) === 'music', ext()._overlays[0].label.text);
         await go(0);
         await settle();
         check('[keep] one write for the removal, no loop', writes === 1 && names() === want(['main', 'code', 'music']), `writes=${writes} ${names()}`);
@@ -327,7 +545,7 @@ export default class SelfTest extends Extension {
         check('[keep] insert moved later names up', names() === want(['main', '', 'code', 'music']), names());
         const fresh = await shown(1);
         check('[keep] new workspace has the default name', !['main', 'code', 'music'].includes(fresh), fresh);
-        check('[keep] code followed its workspace to 3', await shown(2) === 'code', ext()._label.text);
+        check('[keep] code followed its workspace to 3', await shown(2) === 'code', ext()._overlays[0].label.text);
         await go(0);
         await settle();
         check('[keep] one write for the insert, no loop', writes === 1, `writes=${writes} ${names()}`);
@@ -338,7 +556,7 @@ export default class SelfTest extends Extension {
         await sleep(500);
         check('[keep] reorder moved the window', at(wC) === 0 && at(wA) === 1 && at(wD) === 2, `C=${at(wC)} A=${at(wA)} D=${at(wD)}`);
         check('[keep] reorder permuted names', names() === want(['code', 'main', '', 'music']), names());
-        check('[keep] reordered workspace shows code', await shown(0) === 'code', ext()._label.text);
+        check('[keep] reordered workspace shows code', await shown(0) === 'code', ext()._overlays[0].label.text);
         await settle();
         check('[keep] one write for the reorder, no loop', writes === 1, `writes=${writes}`);
 
@@ -382,7 +600,7 @@ export default class SelfTest extends Extension {
             `n=${wm.n_workspaces} E=${at(wE)} ${names()}`);
         ext()._onShortcut();
         await sleep(200);
-        check('[keep] Super+F2 after re-enable shows docs', ext()._label.text === 'docs', ext()._label.text);
+        check('[keep] Super+F2 after re-enable shows docs', ext()._overlays[0].label.text === 'docs', ext()._overlays[0].label.text);
         await settle();
 
         procs.forEach(p => p.force_exit());

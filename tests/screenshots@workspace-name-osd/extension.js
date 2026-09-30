@@ -1,4 +1,5 @@
 import Gio from 'gi://Gio';
+import Clutter from 'gi://Clutter';
 import GLib from 'gi://GLib';
 import Shell from 'gi://Shell';
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
@@ -27,7 +28,9 @@ export default class Shots extends Extension {
     disable() { if (this._id) GLib.source_remove(this._id); }
 
     async _run() {
-        const out = GLib.getenv('WSOSD_SHOTS');
+        const multi = Main.layoutManager.monitors.length > 1;
+        // One monitor makes the README shots; several make the PR evidence.
+        const out = GLib.getenv('WSOSD_SHOTS') + (multi ? '/pr-evidence/all-monitors' : '');
         const ext = Main.extensionManager.lookup(UUID).stateObj;
         const wm = global.workspace_manager;
 
@@ -38,6 +41,16 @@ export default class Shots extends Extension {
         wm.get_workspace_by_index(1).activate(global.get_current_time());
         await sleep(1500);
         await capture(`${out}/switch.png`);
+
+        // With several monitors, rename on the second one, where the
+        // pointer is, to show the other screens keep the name.
+        if (multi) {
+            const m = Main.layoutManager.monitors[1];
+            const seat = Clutter.get_default_backend().get_default_seat();
+            const ptr = seat.create_virtual_device(Clutter.InputDeviceType.POINTER_DEVICE);
+            ptr.notify_absolute_motion(GLib.get_monotonic_time(), m.x + m.width - 40, m.y + m.height - 40);
+            await sleep(300);
+        }
 
         ext._onShortcut();
         await sleep(300);
