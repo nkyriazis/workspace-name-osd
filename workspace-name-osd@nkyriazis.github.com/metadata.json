@@ -5,5 +5,5 @@
   "shell-version": ["50"],
   "settings-schema": "org.gnome.shell.extensions.workspace-name-osd",
   "url": "https://github.com/nkyriazis/workspace-name-osd",
-  "version": 1
+  "version-name": "2"
 }
